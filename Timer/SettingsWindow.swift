@@ -1,6 +1,17 @@
 import SwiftUI
 import AppKit
 
+// MARK: - SettingsWindow View
+// A lightweight SwiftUI configuration surface embedded inside an AppKit window.
+// This window is opened from the status bar menu and lets the user adjust:
+//  - Work & break durations (in minutes; validated numeric input only)
+//  - Display mode (time vs progress)
+//  - Notification preferences (including 1‑minute warning toggle)
+//
+// The bindings are bridged straight into `AppDelegate` state. TextFields keep
+// transient string buffers (`tempWork`, `tempBreak`) to avoid committing partial
+// input (e.g., typing '2', then '5') as intermediate values.
+
 struct SettingsWindow: View {
     @Binding var workMinutes: Int
     @Binding var breakMinutes: Int
@@ -60,7 +71,10 @@ struct SettingsWindow: View {
                 
                 Divider().padding(.vertical, 4)
                 Toggle("Enable Notifications", isOn: $notificationsEnabled)
+                    .toggleStyle(.switch)
                 Toggle("1-Minute Warning", isOn: $oneMinuteWarningEnabled)
+                    .toggleStyle(.switch)
+                    .disabled(!notificationsEnabled)
             }
 
             Spacer(minLength: 0)
