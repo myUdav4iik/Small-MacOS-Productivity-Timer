@@ -1,17 +1,10 @@
-//
-//  TimerApp.swift
-//  Timer
-//
-//  Created by vadym on 06.09.2025.
-//
-
 import SwiftUI
 
 @main
-struct TimerApp: App {
+struct TimerBarApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
-        }
+        Settings {} // No main window, only settings if needed
     }
 }
