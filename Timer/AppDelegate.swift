@@ -21,6 +21,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var workDuration: Int = 25 * 60
     var breakDuration: Int = 5 * 60
     var settingsWindowController: NSWindowController?
+    // Notification preferences
+    var notificationsEnabled: Bool = true
+    var oneMinuteWarningEnabled: Bool = true
+    private var didSendOneMinuteWarning: Bool = false
+    private let defaults = UserDefaults.standard
+    private let prefWorkMinutesKey = "workMinutes"
+    private let prefBreakMinutesKey = "breakMinutes"
+    private let prefDisplayModeKey = "displayMode"
+    private let prefNotificationsEnabledKey = "notificationsEnabled"
+    private let prefOneMinuteWarningKey = "oneMinuteWarningEnabled"
+    private let prefPausedKey = "pausedState"
+    // Debug logging removed for production build
 
     // DisplayMode enum now top-level
 
@@ -28,22 +40,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // Use accessory activation policy so app does NOT show in Dock but can present windows
     NSApp.setActivationPolicy(.accessory)
         
+        // Load saved preferences before constructing menu
+        loadPreferences()
+
         // Request notification permissions & set delegate so notifications appear while app is frontmost
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        center.requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
-            if !granted {
-                // Could log or update UI if needed
-            }
-        }
+    center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
         
     // Create the status bar item (no icon, we'll show only text)
     statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         
     buildMenu()
-    workDuration = 25 * 60
-    breakDuration = 5 * 60
-    timeRemaining = workDuration
+    if workDuration <= 0 { workDuration = 25 * 60 }
+    if breakDuration <= 0 { breakDuration = 5 * 60 }
+    timeRemaining = isWorkSession ? workDuration : breakDuration
     updateStatusButtonTitle() // show initial 25:00 immediately
     startTimer() // timer ticks but won't decrement until unpaused
     }
@@ -55,13 +66,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             if !self.isPaused {
                 if self.timeRemaining > 0 {
                     self.timeRemaining -= 1
+                    // 1-minute warning
+                    if self.oneMinuteWarningEnabled && self.notificationsEnabled && self.timeRemaining == 60 && !self.didSendOneMinuteWarning {
+                        self.didSendOneMinuteWarning = true
+                        self.sendNotification(title: self.isWorkSession ? "Work Almost Done" : "Break Ending Soon", body: "1 minute remaining")
+                    }
                 } else {
                     // Timer completed - send notification
-                    self.sendNotification()
+                    if self.notificationsEnabled {
+                        self.sendCompletionNotification()
+                    }
                     
                     // Switch session
                     self.isWorkSession.toggle()
                     self.timeRemaining = self.isWorkSession ? self.workDuration : self.breakDuration
+                    self.didSendOneMinuteWarning = false
                 }
             }
 
@@ -83,7 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
     
-    private func sendNotification() {
+    private func sendCompletionNotification() {
         let finishedWork = isWorkSession // state BEFORE toggle (caller toggles after this)
         let content = UNMutableNotificationContent()
         if finishedWork {
@@ -98,6 +117,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         UNUserNotificationCenter.current().add(request)
     }
 
+    private func sendNotification(title: String, body: String) {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
+    UNUserNotificationCenter.current().add(request)
+    }
+
     // Show notifications even if app is active
     func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
         completionHandler([.banner, .sound])
@@ -108,8 +136,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         timeRemaining = workDuration
     // Auto-resume when a new work session is explicitly started
     isPaused = false
+    didSendOneMinuteWarning = false
     updateMenuDisplayState()
     updateStatusButtonTitle()
+    savePreferences()
     }
 
     @objc func startBreak() {
@@ -117,8 +147,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         timeRemaining = breakDuration
     // Auto-resume when a break session is explicitly started
     isPaused = false
+    didSendOneMinuteWarning = false
     updateMenuDisplayState()
     updateStatusButtonTitle()
+    savePreferences()
     }
 
     @objc func togglePause() {
@@ -135,7 +167,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if let existing = settingsWindowController, let existingWindow = existing.window {
             NSApp.activate(ignoringOtherApps: true)
             existingWindow.makeKeyAndOrderFront(nil)
-            existingWindow.orderFrontRegardless()
             if let tf = firstEditableTextField(in: existingWindow.contentView) {
                 // Defer one cycle to ensure view layout finished
                 DispatchQueue.main.async { existingWindow.makeFirstResponder(tf) }
@@ -151,6 +182,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     self.timeRemaining = self.workDuration
                     self.updateStatusButtonTitle()
                 }
+                self.savePreferences()
             }),
             breakMinutes: Binding(get: { self.breakDuration / 60 }, set: { newVal in
                 self.breakDuration = max(1, newVal) * 60
@@ -158,15 +190,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     self.timeRemaining = self.breakDuration
                     self.updateStatusButtonTitle()
                 }
+                self.savePreferences()
             }),
             displayMode: Binding(get: { self.displayMode }, set: { newMode in
                 self.displayMode = newMode
                 self.updateStatusButtonTitle()
+                self.savePreferences()
             }),
             isPaused: Binding(get: { self.isPaused }, set: { val in
                 self.isPaused = val
                 self.updateMenuDisplayState()
-            })
+                self.savePreferences()
+            }),
+            notificationsEnabled: Binding(get: { self.notificationsEnabled }, set: { self.notificationsEnabled = $0; self.savePreferences() }),
+            oneMinuteWarningEnabled: Binding(get: { self.oneMinuteWarningEnabled }, set: { self.oneMinuteWarningEnabled = $0; self.savePreferences() })
         )
 
         let hosting = NSHostingController(rootView: view)
@@ -179,7 +216,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Try to position near the status bar item; fallback to center
         if let button = statusItem.button, let buttonWindow = button.window, let screen = buttonWindow.screen {
             let buttonFrameOnScreen = buttonWindow.frame
-            let desiredSize = NSSize(width: 340, height: 230)
+            let desiredSize = NSSize(width: 340, height: 260)
             var x = buttonFrameOnScreen.midX - desiredSize.width / 2
             var y = buttonFrameOnScreen.minY - desiredSize.height - 8
             let visible = screen.visibleFrame
@@ -196,7 +233,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         // Activate app & show window immediately (menu will close automatically afterwards)
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        window.orderFrontRegardless()
 
         // Make first responder next runloop cycle only (no arbitrary delay)
         DispatchQueue.main.async(qos: .userInteractive) { [weak self, weak window] in
@@ -209,6 +245,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main) { [weak self] _ in
             self?.settingsWindowController = nil
         }
+    }
+    private func savePreferences() {
+        defaults.set(workDuration / 60, forKey: prefWorkMinutesKey)
+        defaults.set(breakDuration / 60, forKey: prefBreakMinutesKey)
+        defaults.set(displayMode == .time ? "time" : "progress", forKey: prefDisplayModeKey)
+        defaults.set(notificationsEnabled, forKey: prefNotificationsEnabledKey)
+        defaults.set(oneMinuteWarningEnabled, forKey: prefOneMinuteWarningKey)
+        defaults.set(isPaused, forKey: prefPausedKey)
+    }
+
+    private func loadPreferences() {
+        if let storedWork = defaults.object(forKey: prefWorkMinutesKey) as? Int { workDuration = storedWork * 60 }
+        if let storedBreak = defaults.object(forKey: prefBreakMinutesKey) as? Int { breakDuration = storedBreak * 60 }
+        if let mode = defaults.string(forKey: prefDisplayModeKey) { displayMode = (mode == "progress") ? .progress : .time }
+        if defaults.object(forKey: prefNotificationsEnabledKey) != nil { notificationsEnabled = defaults.bool(forKey: prefNotificationsEnabledKey) }
+        if defaults.object(forKey: prefOneMinuteWarningKey) != nil { oneMinuteWarningEnabled = defaults.bool(forKey: prefOneMinuteWarningKey) }
+        if defaults.object(forKey: prefPausedKey) != nil { isPaused = defaults.bool(forKey: prefPausedKey) }
     }
 
     private func firstEditableTextField(in view: NSView?) -> NSTextField? {

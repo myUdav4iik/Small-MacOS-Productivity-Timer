@@ -6,6 +6,8 @@ struct SettingsWindow: View {
     @Binding var breakMinutes: Int
     @Binding var displayMode: DisplayMode
     @Binding var isPaused: Bool
+    @Binding var notificationsEnabled: Bool
+    @Binding var oneMinuteWarningEnabled: Bool
 
     @State private var tempWork: String = ""
     @State private var tempBreak: String = ""
@@ -55,7 +57,10 @@ struct SettingsWindow: View {
                     .pickerStyle(.segmented)
                     .frame(width: 220)
                 }
-                Toggle("Paused", isOn: $isPaused)
+                
+                Divider().padding(.vertical, 4)
+                Toggle("Enable Notifications", isOn: $notificationsEnabled)
+                Toggle("1-Minute Warning", isOn: $oneMinuteWarningEnabled)
             }
 
             Spacer(minLength: 0)
@@ -68,7 +73,7 @@ struct SettingsWindow: View {
             }
         }
         .padding(24)
-        .frame(minWidth: 360, minHeight: 260)
+    .frame(minWidth: 380, minHeight: 380)
         .onAppear {
             tempWork = String(workMinutes)
             tempBreak = String(breakMinutes)
